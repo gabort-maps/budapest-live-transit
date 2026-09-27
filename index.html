@@ -397,9 +397,12 @@ async function start(){
 
   map.on('click', 'veh', e => {
     const f = e.features[0]; if (!f) return;
-    selected = f.properties.id; if (popup) popup.remove();
-    popup = new maplibregl.Popup({closeButton:true, maxWidth:'280px', offset:12, focusAfterOpen:false}).setLngLat(f.geometry.coordinates).setHTML(popupHTML(selected)).addTo(map);
-    popup.on('close', () => { selected = null; });
+    // Close the old popup first: its 'close' handler clears the selection, and must not clear the new one.
+    if (popup) popup.remove();
+    selected = f.properties.id;
+    const p = new maplibregl.Popup({closeButton:true, maxWidth:'280px', offset:12, focusAfterOpen:false}).setLngLat(f.geometry.coordinates).setHTML(popupHTML(selected)).addTo(map);
+    p.on('close', () => { if (popup === p) { selected = null; popup = null; } });
+    popup = p;
   });
   map.on('mouseenter', 'veh', () => map.getCanvas().style.cursor = 'pointer');
   map.on('mouseleave', 'veh', () => map.getCanvas().style.cursor = '');
