@@ -1,0 +1,38 @@
+# Builds metro.json from BKK's public GTFS timetable (no API key) and publishes the site to GitHub Pages.
+# Runs on every push to main, on the 1st and 15th of each month at 03:17 UTC, and on demand (Actions tab > Run workflow).
+# If the BKK download fails, the run fails, GitHub emails the owner, and the last good site stays online.
+name: Build metro timetable and deploy
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 3 1,15 * *"
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build metro.json from the BKK timetable
+        run: python build_metro_schedule.py
+      - name: Collect site files
+        run: mkdir _site && cp *.html *.json _site/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@v4
