@@ -124,7 +124,7 @@ details.grp .items{display:flex;flex-direction:column;gap:2px;padding:6px 0 4px}
       <dl>
         <dt>Live vehicles</dt><dd>BKK FUTÁR API, vehicles within 20 km of the centre, read every 10 seconds through a small proxy (the API key is not in this page). Markers glide between readings. Direction from the feed; where missing, from the last two positions. Metro is not in the live feed. Delay is not in this feed.</dd>
         <dt>Metro (timetable, not live)</dt><dd>BKK's public GTFS timetable, rebuilt automatically on the 1st and 15th of each month and on every update of this page. Each train is placed where the timetable says it should be now, moving along the line between stations. Delays, cancellations and closures are not shown. The timetable has no stopping time at stations; 20 seconds is assumed (less on short hops). Timetable build: <span id="mbuild">–</span>.</dd>
-        <dt>MOL Bubi activity (about 2 minutes behind)</dt><dd>BKK's bike-rental feed, read every minute by the proxy and compared with the previous reading. A station flash is the net change in bikes at that station within one minute (orange: taken out, green: returned); several rentals and returns in the same minute can cancel out, so these are minimums. Rides are shown only when proven: a loose bike (parked outside a station, with its own number) seen at one place and then at another at least 150 m away. The line is a straight curve between the two points, not the route ridden. The ride is replayed in 20 seconds once it has ended. Rides that start or end at a station cannot be followed (station bikes carry no number), so they are not drawn. No ride data comes from BKK; nothing is paired or estimated.</dd>
+        <dt>MOL Bubi activity (about 2 minutes behind)</dt><dd>BKK's bike-rental feed, read every minute by the proxy and compared with the previous reading. A station flash is the net change in bikes at that station within one minute (orange: taken out, green: returned); several rentals and returns in the same minute can cancel out, so these are minimums. Rides are shown only when proven: a loose bike (parked outside a station, with its own number) seen at one place and then at another at least 150 m away. The line is a straight curve between the two points, not the route ridden. The ride is replayed in 20 seconds once it has ended, then stays on the map for 24 hours, fading with age. Rides that start or end at a station cannot be followed (station bikes carry no number), so they are not drawn. No ride data comes from BKK; nothing is paired or estimated.</dd>
         <dt>Colours</dt><dd>One colour per mode for vehicles and timetable lines. Metro lines keep their official M1–M4 colours. The line's own colour appears on the badge in the popup.</dd>
         <dt>Timetable lines and stops</dt><dd>BKK GTFS 2768.20260926, weekday, one shape per line; stops sized by weekday departures.</dd>
         <dt>Base map</dt><dd>© OpenStreetMap contributors (ODbL): districts (land only), Margitsziget (library reference unit MS), Danube, main roads, railway lines and stations. City boundary derived from districts + Danube.</dd>
@@ -145,7 +145,7 @@ const INLINE = {"city":{"type":"FeatureCollection","features":[{"type":"Feature"
 const LAZY = ["roads","routes","railline","railst","stops"];
 const METRO_INLINE = null;   // offline build only; the web build fetches metro.json (rebuilt from BKK's timetable by GitHub Actions)   // on the web build: names of layers fetched from data/<name>.json when first switched on
 const PROXY_BASE = 'https://bkk-proxy.gabortamas01.workers.dev';
-const PROXY = PROXY_BASE + '/vehicles', BUBI_URL = PROXY_BASE + '/bubi/activity';
+const PROXY = PROXY_BASE + '/vehicles', BUBI_URL = PROXY_BASE + '/bubi/activity', RIDES_URL = PROXY_BASE + '/bubi/rides';
 const POLL_MS = 10000, ANIM_MS = 9500, FRAME_MS = 100, STALE_S = 600;
 const BOUNDS = [[18.93,47.35],[19.34,47.62]];
 const MODES = ['TRAM','TROLLEYBUS','BUS','SUBURBAN_RAILWAY','RAIL','COACH'];
@@ -170,8 +170,8 @@ const G = [
  {t:'MOL Bubi activity', open:true, items:[
   {id:'k-out', l:'Bikes taken out at stations', sw:['veh','var(--b-out)'], c:'–', ly:['bubi-flash-out']},
   {id:'k-in', l:'Bikes returned to stations', sw:['veh','var(--b-in)'], c:'–', ly:['bubi-flash-in']},
-  {id:'k-ride', l:'Proven rides (loose bikes)', sw:['line','var(--b-ride)'], c:'–', ly:['bubi-line','bubi-dot']}],
-  note:'About 2 minutes behind. Counts are the last 30 minutes. Station bikes carry no number, so most rides cannot be followed: only loose bikes seen at two places are drawn, as a curve, not the route ridden.'},
+  {id:'k-ride', l:'Proven rides, last 24 hours (loose bikes)', sw:['line','var(--b-ride)'], c:'–', ly:['bubi-line','bubi-dot']}],
+  note:'About 2 minutes behind. Station counts: last 30 minutes. Rides stay for 24 hours, fading with age, to show where they happen. Station bikes carry no number, so most rides cannot be followed: only loose bikes seen at two places are drawn, as a curve, not the route ridden.'},
  {t:'Timetable lines', items:[
   {id:'r-metro', l:'Metro M1–M4', sw:['line','linear-gradient(90deg,#FFD800 25%,#E41F18 25% 50%,#005CA5 50% 75%,#4CA22F 75%)'], c:'4', ly:['rt-metro-case','rt-metro'], src:['routes']},
   {id:'r-hev', l:'HÉV', sw:['line','var(--m-hev)'], c:'5', ly:['rt-hev'], src:['routes']},
@@ -396,7 +396,7 @@ function frame(ts){
   if (map && METRO && map.getSource('metro') && ts - lastMetro >= 200){ map.getSource('metro').setData(metroFC()); lastMetro = ts;
     if (String(selected).startsWith('metro:')) updatePopup(false);
     if (ts - lastMCount > 5000){ metroCount(); lastMCount = ts; } }
-  if (map && map.getSource('bubiev') && BTICKS.size && ts - lastBubi >= (bubiBusy ? 80 : 500)){ bubiBusy = bubiFrame() > 0; lastBubi = ts; }
+  if (map && map.getSource('bubiev') && (BTICKS.size || RIDES.size) && ts - lastBubi >= (bubiBusy ? 80 : 500)){ bubiBusy = bubiFrame() > 0; lastBubi = ts; }
   if (map && map.getSource('bubiride') && ts - lastBubiLines >= 5000){ bubiLines(); lastBubiLines = ts; }
   requestAnimationFrame(frame);
 }
@@ -467,8 +467,9 @@ async function loadMetro(){
 }
 
 // ---------- MOL Bubi activity (from the proxy's minute-by-minute record) ----------
-const BUBI_POLL_MS = 30000, BDELAY = 120000, FLASH_MS = 4000, RIDE_MS = 20000, BKEEP = 30*60000;
-const BTICKS = new Map();             // t -> {e, r}
+const BUBI_POLL_MS = 30000, RIDES_POLL_MS = 60000, RIDE_DAY = 24*3600000, BDELAY = 120000, FLASH_MS = 4000, RIDE_MS = 20000, BKEEP = 30*60000;
+const BTICKS = new Map();             // t -> {e}: station changes
+const RIDES = new Map();              // id -> proven ride
 let bSkew = 0, bOk = null, bLast = null, lastBubi = 0, lastBubiLines = 0, bubiBusy = false;
 const bClock = () => Date.now() + bSkew - BDELAY;   // playback time on the proxy's clock
 function hash01(s){ let h = 2166136261; for (let i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0) / 4294967296; }
@@ -483,31 +484,39 @@ function bubiIngest(d){
   for (const k of d.ticks || []){
     if (BTICKS.has(k.t)) continue;
     const e = (k.e || []).map(x => ({code:x[0], p:[x[2], x[1]], d:x[3], at: k.t - 60000 + hash01(x[0] + k.t) * 60000}));
-    const r = (k.r || []).map((x, i) => ({id:'ride:' + k.t + ':' + i, a:[x[1], x[0]], b:[x[3], x[2]], t0:x[4], t1:x[5], type:x[6], pts:curve([x[1], x[0]], [x[3], x[2]])}));
-    BTICKS.set(k.t, {e, r});
+    BTICKS.set(k.t, {e});
   }
   for (const t of [...BTICKS.keys()]) if (t < d.time - BKEEP - BDELAY) BTICKS.delete(t);
 }
-function bubiRide(id){ for (const k of BTICKS.values()) for (const r of k.r) if (r.id === id) return r; return null; }
+function ridesIngest(d){
+  const F = {}, seen = new Set(); d.fields.forEach((f, i) => F[f] = i);
+  for (const x of d.rides){
+    const id = 'ride:' + x[F.id]; seen.add(id); if (RIDES.has(id)) continue;
+    const a = [x[F.lon0], x[F.lat0]], b = [x[F.lon1], x[F.lat1]];
+    RIDES.set(id, {id, a, b, t0:x[F.t0], t1:x[F.t1], type:x[F.type], pts:curve(a, b)});
+  }
+  for (const id of [...RIDES.keys()]) if (!seen.has(id)) RIDES.delete(id);
+}
+const bubiRide = id => RIDES.get(id) || null;
 function bubiFrame(){
   const now = bClock(), ev = [], dots = [];
   for (const k of BTICKS.values()){
     for (const x of k.e){ const q = (now - x.at) / FLASH_MS; if (q >= 0 && q < 1) ev.push({type:'Feature', properties:{s: x.d < 0 ? 'out' : 'in', n: Math.sqrt(Math.abs(x.d)), k: q}, geometry:{type:'Point', coordinates:x.p}}); }
-    for (const r of k.r){ const q = (now - r.t1) / RIDE_MS; if (q >= 0 && q < 1.15){
-      const i = Math.min(24, q * 24), j = Math.floor(i), f = i - j, a = r.pts[j], b = r.pts[Math.min(24, j+1)];
-      dots.push({type:'Feature', properties:{id:r.id}, geometry:{type:'Point', coordinates:[a[0] + (b[0]-a[0])*f, a[1] + (b[1]-a[1])*f]}}); } }
   }
+  for (const r of RIDES.values()){ const q = (now - r.t1) / RIDE_MS; if (q >= 0 && q < 1.15){
+    const i = Math.min(24, q * 24), j = Math.floor(i), f = i - j, a = r.pts[j], b = r.pts[Math.min(24, j+1)];
+    dots.push({type:'Feature', properties:{id:r.id}, geometry:{type:'Point', coordinates:[a[0] + (b[0]-a[0])*f, a[1] + (b[1]-a[1])*f]}}); } }
   map.getSource('bubiev').setData({type:'FeatureCollection', features:ev});
   map.getSource('bubidot').setData({type:'FeatureCollection', features:dots});
   return ev.length + dots.length;
 }
-function bubiLines(){                 // rides already started playing, fading over 30 minutes; also the counts
+function bubiLines(){                 // rides already started playing, fading over 24 hours; also the counts
   const now = bClock(), feats = []; let out = 0, inn = 0, rides = 0;
   for (const k of BTICKS.values()){
     for (const x of k.e) if (x.at <= now && x.at > now - BKEEP){ if (x.d < 0) out -= x.d; else inn += x.d; }
-    for (const r of k.r) if (r.t1 <= now && r.t1 > now - BKEEP){ rides++;
-      feats.push({type:'Feature', properties:{id:r.id, o: Math.max(0.2, 0.9 - 0.7 * (now - r.t1) / BKEEP)}, geometry:{type:'LineString', coordinates:r.pts}}); }
   }
+  for (const r of RIDES.values()) if (r.t1 <= now && r.t1 > now - RIDE_DAY){ rides++;   // bright for the first hours, faint by the end of the day
+    feats.push({type:'Feature', properties:{id:r.id, o: 0.18 + 0.72 * Math.exp(-(now - r.t1) / (3*3600000))}, geometry:{type:'LineString', coordinates:r.pts}}); }
   map.getSource('bubiride').setData({type:'FeatureCollection', features:feats});
   const stale = bOk === false || !bLast || Date.now() + bSkew - bLast > 5*60000;
   [['k-out', out], ['k-in', inn], ['k-ride', rides]].forEach(([id, n]) => { const c = document.getElementById('C-'+id); if (!c) return;
@@ -519,12 +528,18 @@ async function pollBubi(){
   if (map && map.getSource('bubiride')) bubiLines();
   setTimeout(pollBubi, document.hidden ? BUBI_POLL_MS*4 : BUBI_POLL_MS);
 }
+async function pollRides(){
+  try { const r = await fetch(RIDES_URL, {cache:'no-store'}); if (!r.ok) throw new Error(r.status); ridesIngest(await r.json()); }
+  catch(e){ console.error('Bubi rides failed', e); }
+  if (map && map.getSource('bubiride')) bubiLines();
+  setTimeout(pollRides, document.hidden ? RIDES_POLL_MS*4 : RIDES_POLL_MS);
+}
 
 // ---------- popup ----------
 function textOn(hex){ const n = parseInt(String(hex||'888888').slice(0,6),16); return (0.299*(n>>16) + 0.587*((n>>8)&255) + 0.114*(n&255)) > 150 ? '#111' : '#fff'; }
 function popupHTML(id){
   if (String(id).startsWith('ride:')){
-    const r = bubiRide(id); if (!r) return '<span class="pp-m">This ride is older than 30 minutes.</span>';
+    const r = bubiRide(id); if (!r) return '<span class="pp-m">This ride is older than 24 hours.</span>';
     const km = (Math.hypot((r.b[0]-r.a[0])*Math.cos(r.a[1]*Math.PI/180), r.b[1]-r.a[1]) * 111.2).toFixed(1), mins = Math.max(1, Math.round((r.t1 - r.t0)/60000));
     const tm = t => new Date(t).toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'});
     return `<div class="pp-h"><span class="pp-t">MOL Bubi ${r.type === 'ebike' ? 'e-bike' : 'bike'} · proven ride</span></div>
@@ -582,7 +597,7 @@ async function start(){
     d.innerHTML = '<button type="button" title="Reset to base view" aria-label="Reset to base view"><svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" style="display:block;margin:auto"><path d="M4.5 10a5.5 5.5 0 1 0 1.7-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M5.6 2.6v3.8h3.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
     d.firstChild.addEventListener('click', resetView); return d; }, onRemove(){}}, 'top-right');
   map.addControl(new maplibregl.ScaleControl({unit:'metric'}),'bottom-left');
-  map.on('load', () => { applyAll(); loadMsg('Waiting for live vehicles…', 0.7); poll(); loadMetro(); pollBubi(); requestAnimationFrame(frame); });
+  map.on('load', () => { applyAll(); loadMsg('Waiting for live vehicles…', 0.7); poll(); loadMetro(); pollBubi(); pollRides(); requestAnimationFrame(frame); });
 
   const openPopup = e => {
     const f = e.features[0]; if (!f) return;
