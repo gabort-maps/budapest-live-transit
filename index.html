@@ -124,7 +124,7 @@ details.grp .items{display:flex;flex-direction:column;gap:2px;padding:6px 0 4px}
       <dl>
         <dt>Live vehicles</dt><dd>BKK FUTÁR API, vehicles within 20 km of the centre, read every 10 seconds through a small proxy (the API key is not in this page). Markers glide between readings. Direction from the feed; where missing, from the last two positions. Metro is not in the live feed. Delay is not in this feed.</dd>
         <dt>Metro (timetable, not live)</dt><dd>BKK's public GTFS timetable, rebuilt automatically on the 1st and 15th of each month and on every update of this page. Each train is placed where the timetable says it should be now, moving along the line between stations. Delays, cancellations and closures are not shown. The timetable has no stopping time at stations; 20 seconds is assumed (less on short hops). Timetable build: <span id="mbuild">–</span>.</dd>
-        <dt>MOL Bubi activity (about 2 minutes behind)</dt><dd>BKK's bike-rental feed, read every minute by the proxy and compared with the previous reading. A station flash is the net change in bikes at that station within one minute (orange: taken out, green: returned); several rentals and returns in the same minute can cancel out, so these are minimums. Rides are shown only when proven: a loose bike (parked outside a station, with its own number) seen at one place and then at another at least 150 m away. The line is a straight curve between the two points, not the route ridden. The ride is replayed in 20 seconds once it has ended, then stays on the map for 24 hours, fading with age. Rides that start or end at a station cannot be followed (station bikes carry no number), so they are not drawn. No ride data comes from BKK; nothing is paired or estimated.</dd>
+        <dt>MOL Bubi activity (about 2 minutes behind)</dt><dd>Stations: BKK's live bike-rental feed, read every minute, with the bikes and free places at each station now. BKK's bike-rental feed, read every minute by the proxy and compared with the previous reading. A station flash is the net change in bikes at that station within one minute (orange: taken out, green: returned); several rentals and returns in the same minute can cancel out, so these are minimums. Rides are shown only when proven: a loose bike (parked outside a station, with its own number) seen at one place and then at another at least 150 m away. The line is a straight curve between the two points, not the route ridden. The ride is replayed in 20 seconds once it has ended, then stays on the map for 24 hours, fading with age. Rides that start or end at a station cannot be followed (station bikes carry no number), so they are not drawn. No ride data comes from BKK; nothing is paired or estimated.</dd>
         <dt>Colours</dt><dd>One colour per mode for vehicles and timetable lines. Metro lines keep their official M1–M4 colours. The line's own colour appears on the badge in the popup.</dd>
         <dt>Timetable lines and stops</dt><dd>BKK GTFS 2768.20260926, weekday, one shape per line; stops sized by weekday departures.</dd>
         <dt>Base map</dt><dd>© OpenStreetMap contributors (ODbL): districts (land only), Margitsziget (library reference unit MS), Danube, main roads, railway lines and stations. City boundary derived from districts + Danube.</dd>
@@ -145,7 +145,7 @@ const INLINE = {"city":{"type":"FeatureCollection","features":[{"type":"Feature"
 const LAZY = ["roads","routes","railline","railst","stops"];
 const METRO_INLINE = null;   // offline build only; the web build fetches metro.json (rebuilt from BKK's timetable by GitHub Actions)   // on the web build: names of layers fetched from data/<name>.json when first switched on
 const PROXY_BASE = 'https://bkk-proxy.gabortamas01.workers.dev';
-const PROXY = PROXY_BASE + '/vehicles', BUBI_URL = PROXY_BASE + '/bubi/activity', RIDES_URL = PROXY_BASE + '/bubi/rides';
+const PROXY = PROXY_BASE + '/vehicles', BUBI_URL = PROXY_BASE + '/bubi/activity', RIDES_URL = PROXY_BASE + '/bubi/rides', BST_URL = PROXY_BASE + '/bubi';
 const POLL_MS = 10000, ANIM_MS = 9500, FRAME_MS = 100, STALE_S = 600;
 const BOUNDS = [[18.93,47.35],[19.34,47.62]];
 const MODES = ['TRAM','TROLLEYBUS','BUS','SUBURBAN_RAILWAY','RAIL','COACH'];
@@ -168,6 +168,7 @@ const G = [
   {id:'m-lab', l:'Line numbers (zoom in)', sw:['txt','41'], c:'', ly:['veh-lab-tt','veh-lab-other']}],
   note:'The pointer shows direction of travel. Metro is not in BKK’s live feed: metro trains are placed where the timetable says they should be, not where they are.'},
  {t:'MOL Bubi activity', open:true, items:[
+  {id:'k-st', l:'Bubi stations (live bike count)', sw:['dot','var(--b-ride)'], c:'–', ly:['bubi-st','bubi-st-lab']},
   {id:'k-out', l:'Bikes taken out at stations', sw:['veh','var(--b-out)'], c:'–', ly:['bubi-flash-out']},
   {id:'k-in', l:'Bikes returned to stations', sw:['veh','var(--b-in)'], c:'–', ly:['bubi-flash-in']},
   {id:'k-ride', l:'Proven rides, last 24 hours (loose bikes)', sw:['line','var(--b-ride)'], c:'–', ly:['bubi-line','bubi-dot']}],
@@ -191,7 +192,7 @@ const G = [
   {id:'b-roads', l:'Main roads', sw:['line','var(--road)'], c:'5 classes', ly:['roads'], src:['roads']}]}
 ];
 // Base view: what the map shows on load and after Reset.
-const BASE = new Set([...MODES.map(m => 'm-'+m), 'm-METRO', 'm-lab', 'k-out', 'k-in', 'k-ride', 'r-metro','r-hev','r-tram','r-trolleybus','r-bus','r-ferry', 'x-rail','x-railst','x-stops', 'b-city','b-dist','b-danube','b-roads']);
+const BASE = new Set([...MODES.map(m => 'm-'+m), 'm-METRO', 'm-lab', 'k-st', 'k-out', 'k-in', 'k-ride', 'r-metro','r-hev','r-tram','r-trolleybus','r-bus','r-ferry', 'x-rail','x-railst','x-stops', 'b-city','b-dist','b-danube','b-roads']);
 const ITEMS = {}; G.forEach(g => g.items.forEach(it => ITEMS[it.id] = it));
 function swatch([k,c]){
   if (k==='line') return `<span class="sw line" style="background:${c}"></span>`;
@@ -238,7 +239,7 @@ function buildStyle(){
   return {version:8, sources:{
       city:src('city'), districts:src('districts'), margitsziget:src('margitsziget'), danube:src('danube'), dlabels:src('dlabels'), roads:src('roads'),
       routes:src('routes'), railline:src('railline'), railst:src('railst'), stops:src('stops'), veh:{type:'geojson',data:vehFC()}, metro:{type:'geojson',data:metroFC()},
-      bubiev:{type:'geojson',data:EMPTY}, bubiride:{type:'geojson',data:EMPTY}, bubidot:{type:'geojson',data:EMPTY}},
+      bubist:{type:'geojson',data:BSTFC}, bubiev:{type:'geojson',data:EMPTY}, bubiride:{type:'geojson',data:EMPTY}, bubidot:{type:'geojson',data:EMPTY}},
     layers:[
       {id:'bg',type:'background',paint:{'background-color':css('--ground')}},
       {id:'river',type:'fill',source:'city',paint:{'fill-color':css('--water')}},
@@ -274,7 +275,11 @@ function buildStyle(){
         'icon-allow-overlap':true,'icon-ignore-placement':true,'icon-size':['interpolate',['linear'],['zoom'],10,0.6,13,1,16,1.6]}},
       {id:'metro-lab',type:'symbol',source:'metro',minzoom:12.5,layout:{'text-field':['get','l'],'text-font':['IBM Plex Sans Condensed'],'text-size':['interpolate',['linear'],['zoom'],12.5,11,16,14],
         'text-variable-anchor':['top','bottom','left','right'],'text-radial-offset':1.1,'text-padding':1},paint:{'text-color':css('--ink'),'text-halo-color':css('--halo'),'text-halo-width':1.5}},
-      // MOL Bubi: station flashes and proven loose-bike rides, under the live vehicles
+      // MOL Bubi: stations, station flashes and proven loose-bike rides, under the live vehicles
+      {id:'bubi-st',type:'circle',source:'bubist',minzoom:11,paint:{'circle-color':css('--land'),'circle-stroke-color':css('--b-ride'),
+        'circle-radius':['interpolate',['linear'],['zoom'],11,1.8,15,4.5],'circle-stroke-width':['interpolate',['linear'],['zoom'],11,1.2,15,2]}},
+      {id:'bubi-st-lab',type:'symbol',source:'bubist',minzoom:15.5,layout:{'text-field':['get','n'],'text-font':['IBM Plex Sans Condensed'],'text-size':11,'text-offset':[0,0.9],'text-anchor':'top','text-optional':true},
+        paint:{'text-color':css('--ink-2'),'text-halo-color':css('--halo'),'text-halo-width':1.3}},
       {id:'bubi-line',type:'line',source:'bubiride',layout:{'line-cap':'round'},paint:{'line-color':css('--b-ride'),'line-opacity':['get','o'],'line-width':lw(1.2,3),'line-dasharray':[2,1.5]}},
       ...['out','in'].map(k => ({id:'bubi-flash-'+k,type:'circle',source:'bubiev',filter:['==',['get','s'],k],paint:{'circle-color':css('--b-'+k),
         'circle-opacity':['*',0.7,['-',1,['get','k']]],'circle-stroke-color':css('--b-'+k),'circle-stroke-width':1.5,'circle-stroke-opacity':['-',1,['get','k']],
@@ -470,6 +475,7 @@ async function loadMetro(){
 const BUBI_POLL_MS = 30000, RIDES_POLL_MS = 60000, RIDE_DAY = 24*3600000, BDELAY = 120000, FLASH_MS = 4000, RIDE_MS = 20000, BKEEP = 30*60000;
 const BTICKS = new Map();             // t -> {e}: station changes
 const RIDES = new Map();              // id -> proven ride
+let BSTFC = EMPTY, bstTime = null;       // Bubi stations from the live feed
 let bSkew = 0, bOk = null, bLast = null, lastBubi = 0, lastBubiLines = 0, bubiBusy = false;
 const bClock = () => Date.now() + bSkew - BDELAY;   // playback time on the proxy's clock
 function hash01(s){ let h = 2166136261; for (let i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0) / 4294967296; }
@@ -528,6 +534,19 @@ async function pollBubi(){
   if (map && map.getSource('bubiride')) bubiLines();
   setTimeout(pollBubi, document.hidden ? BUBI_POLL_MS*4 : BUBI_POLL_MS);
 }
+async function pollStations(){        // stations only: loose bikes (spaces 999, type bike/ebike) are left out
+  try {
+    const r = await fetch(BST_URL, {cache:'no-store'}); if (!r.ok) throw new Error(r.status); const d = await r.json();
+    const F = {}; d.fields.forEach((f, i) => F[f] = i);
+    const feats = d.rows.filter(x => !(x[F.spaces] === 999 || /bike/i.test(x[F.type])))
+      .map(x => ({type:'Feature', properties:{id:'bst:' + (x[F.code] || x[F.id]), code:x[F.code], n:x[F.name], b:x[F.bikes], s:x[F.spaces]}, geometry:{type:'Point', coordinates:[x[F.lon], x[F.lat]]}}));
+    BSTFC = {type:'FeatureCollection', features:feats}; bstTime = d.time;
+    if (map && map.getSource('bubist')) map.getSource('bubist').setData(BSTFC);
+    const c = document.getElementById('C-k-st'); if (c){ c.textContent = nf(feats.length); c.classList.remove('cnt-err'); }
+    if (String(selected).startsWith('bst:') && popup && popup.isOpen()) popup.setHTML(popupHTML(selected));
+  } catch(e){ console.error('Bubi stations failed', e); if (!BSTFC.features.length){ const c = document.getElementById('C-k-st'); if (c){ c.textContent = 'not loaded'; c.classList.add('cnt-err'); } } }
+  setTimeout(pollStations, document.hidden ? 240000 : 60000);
+}
 async function pollRides(){
   try { const r = await fetch(RIDES_URL, {cache:'no-store'}); if (!r.ok) throw new Error(r.status); ridesIngest(await r.json()); }
   catch(e){ console.error('Bubi rides failed', e); }
@@ -538,6 +557,17 @@ async function pollRides(){
 // ---------- popup ----------
 function textOn(hex){ const n = parseInt(String(hex||'888888').slice(0,6),16); return (0.299*(n>>16) + 0.587*((n>>8)&255) + 0.114*(n&255)) > 150 ? '#111' : '#fff'; }
 function popupHTML(id){
+  if (String(id).startsWith('bst:')){
+    const f = BSTFC.features.find(x => x.properties.id === id); if (!f) return '<span class="pp-m">This station is no longer in the feed.</span>';
+    const p = f.properties;
+    return `<div class="pp-h"><span class="pp-t">MOL Bubi station ${esc(p.code)}</span></div>
+      <div class="pp-g">
+        <span class="k">Name</span><span>${esc(p.n)}</span>
+        <span class="k">Bikes now</span><span>${p.b == null ? '–' : nf(p.b)}</span>
+        <span class="k">Free places</span><span>${p.s == null ? '–' : nf(p.s)}</span>
+        <span class="k">Updated</span><span class="pp-m">${bstTime ? new Date(bstTime).toLocaleTimeString('en-GB') : '–'}</span>
+      </div>`;
+  }
   if (String(id).startsWith('ride:')){
     const r = bubiRide(id); if (!r) return '<span class="pp-m">This ride is older than 24 hours.</span>';
     const km = (Math.hypot((r.b[0]-r.a[0])*Math.cos(r.a[1]*Math.PI/180), r.b[1]-r.a[1]) * 111.2).toFixed(1), mins = Math.max(1, Math.round((r.t1 - r.t0)/60000));
@@ -573,7 +603,7 @@ function popupHTML(id){
     </div>`;
 }
 function updatePopup(content){
-  if (!popup || !popup.isOpen() || String(selected).startsWith('ride:')) return;
+  if (!popup || !popup.isOpen() || /^(ride|bst):/.test(String(selected))) return;
   if (String(selected).startsWith('metro:')){ const m = MPOS.get(selected); if (m) popup.setLngLat(m.p); if (content || !m) popup.setHTML(popupHTML(selected)); return; }
   const v = VEH.get(selected); if (v) popup.setLngLat(pos(v, performance.now())); if (content || !v) popup.setHTML(popupHTML(selected));
 }
@@ -597,7 +627,7 @@ async function start(){
     d.innerHTML = '<button type="button" title="Reset to base view" aria-label="Reset to base view"><svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" style="display:block;margin:auto"><path d="M4.5 10a5.5 5.5 0 1 0 1.7-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M5.6 2.6v3.8h3.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
     d.firstChild.addEventListener('click', resetView); return d; }, onRemove(){}}, 'top-right');
   map.addControl(new maplibregl.ScaleControl({unit:'metric'}),'bottom-left');
-  map.on('load', () => { applyAll(); loadMsg('Waiting for live vehicles…', 0.7); poll(); loadMetro(); pollBubi(); pollRides(); requestAnimationFrame(frame); });
+  map.on('load', () => { applyAll(); loadMsg('Waiting for live vehicles…', 0.7); poll(); loadMetro(); pollBubi(); pollRides(); pollStations(); requestAnimationFrame(frame); });
 
   const openPopup = e => {
     const f = e.features[0]; if (!f) return;
@@ -608,8 +638,9 @@ async function start(){
     p.on('close', () => { if (popup === p) { selected = null; popup = null; } });
     popup = p;
   };
-  map.on('click', 'veh', openPopup); map.on('click', 'metro', openPopup); map.on('click', 'bubi-line', e => { if (!map.queryRenderedFeatures(e.point, {layers:['veh','metro'].filter(l => map.getLayer(l))}).length) openPopup(e); });
-  for (const l of ['veh','metro','bubi-line']){ map.on('mouseenter', l, () => map.getCanvas().style.cursor = 'pointer'); map.on('mouseleave', l, () => map.getCanvas().style.cursor = ''); }
+  map.on('click', 'veh', openPopup); map.on('click', 'metro', openPopup); map.on('click', 'bubi-st', e => { if (!map.queryRenderedFeatures(e.point, {layers:['veh','metro'].filter(l => map.getLayer(l))}).length) openPopup(e); });
+  map.on('click', 'bubi-line', e => { if (!map.queryRenderedFeatures(e.point, {layers:['veh','metro','bubi-st'].filter(l => map.getLayer(l))}).length) openPopup(e); });
+  for (const l of ['veh','metro','bubi-line','bubi-st']){ map.on('mouseenter', l, () => map.getCanvas().style.cursor = 'pointer'); map.on('mouseleave', l, () => map.getCanvas().style.cursor = ''); }
 
   const restyle = () => { map.setStyle(buildStyle(), {diff:false}); map.once('styledata', applyAll); };
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', restyle);
