@@ -1,0 +1,43 @@
+# Fleet study 21-27 Oct 2026: copy each recorded hour from the bkk-proxy Worker to the branch fleet-data.
+# Runs every hour; fetches any of the last 36 complete hours not yet saved. Does not touch main or the website.
+name: fleet-export
+on:
+  schedule:
+    - cron: "25 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: fleet-export
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Stop after the study
+        run: |
+          if [ "$(date -u +%Y%m%d)" -gt 20261029 ]; then echo "study over"; exit 0; fi
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Get or create the fleet-data branch
+        run: |
+          git config user.name "fleet-export"; git config user.email "actions@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin fleet-data >/dev/null; then
+            git fetch --depth 1 origin fleet-data && git checkout fleet-data
+          else
+            git checkout --orphan fleet-data && git rm -rf . >/dev/null && echo "Fleet study data, one gzip file per hour (UTC). Data source: BKK Zrt., CC BY 4.0" > README.md
+          fi
+      - name: Download missing hours
+        run: |
+          for i in $(seq 1 36); do
+            h=$(date -u -d "-$i hour" +%Y%m%d%H); d=${h:0:8}; f="fleet/$d/$h.ndjson.gz"
+            [ -s "$f" ] && continue
+            [ "$h" -lt 2026102018 ] && continue
+            mkdir -p "fleet/$d"
+            code=$(curl -sS -m 120 -D hdr.txt -o "$f.tmp" -w "%{http_code}" "https://bkk-proxy.gabortamas01.workers.dev/fleet/hour?h=$h")
+            n=$(grep -i '^x-minutes:' hdr.txt | tr -dc 0-9)
+            if [ "$code" = "200" ] && [ "${n:-0}" -gt 0 ]; then mv "$f.tmp" "$f"; echo "$h $n minutes"; else rm -f "$f.tmp"; echo "$h skipped ($code, ${n:-0})"; fi
+          done
+      - name: Save
+        run: |
+          git add -A fleet README.md 2>/dev/null || true
+          git diff --cached --quiet || (git commit -m "fleet data $(date -u +%Y-%m-%dT%H:%MZ)" && git push origin fleet-data)
