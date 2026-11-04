@@ -1,0 +1,50 @@
+# MOL Bubi recording: copy each recorded hour from the bkk-proxy Worker (/bubi/hour) to the branch fleet-data, folder bubi/.
+# Runs every hour at :35. Fetches any of the last 60 complete hours not yet saved (the Worker keeps station changes 3 days).
+# No end date. Does not touch main or the website. Run by hand with hours=200 once after the first deploy to save the
+# loose-bike rides still held in the Worker (kept 8 days).
+name: bubi-export
+on:
+  schedule:
+    - cron: "35 * * * *"
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: "How many past hours to check"
+        default: "60"
+permissions:
+  contents: write
+concurrency: fleet-export   # same group as fleet-export: both write to fleet-data, never at the same time
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Get or create the fleet-data branch
+        run: |
+          git config user.name "bubi-export"; git config user.email "actions@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin fleet-data >/dev/null; then
+            git fetch --depth 1 origin fleet-data && git checkout fleet-data
+          else
+            git checkout --orphan fleet-data && git rm -rf . >/dev/null && echo "Recorded data, one gzip file per hour (UTC). Data source: BKK Zrt., CC BY 4.0" > README.md
+          fi
+      - name: Download missing hours
+        run: |
+          N="${{ github.event.inputs.hours }}"; N="${N:-60}"
+          for i in $(seq 1 "$N"); do
+            h=$(date -u -d "-$i hour" +%Y%m%d%H); d=${h:0:8}; f="bubi/$d/$h.json.gz"
+            [ -s "$f" ] && continue
+            mkdir -p "bubi/$d"
+            code=$(curl -sS -m 120 -D hdr.txt -o "$h.tmp" -w "%{http_code}" "https://bkk-proxy.gabortamas01.workers.dev/bubi/hour?h=$h")
+            nt=$(grep -i '^x-ticks:' hdr.txt | tr -dc 0-9); nr=$(grep -i '^x-rides:' hdr.txt | tr -dc 0-9); ns=$(grep -i '^x-snaps:' hdr.txt | tr -dc 0-9)
+            if [ "$code" = "200" ] && [ $(( ${nt:-0} + ${nr:-0} + ${ns:-0} )) -gt 0 ]; then
+              gzip -9 -c "$h.tmp" > "$f"; echo "$h ticks ${nt:-0} rides ${nr:-0} snaps ${ns:-0}"
+            else echo "$h skipped ($code)"; fi
+            rm -f "$h.tmp"
+          done
+          rmdir bubi/* 2>/dev/null || true
+      - name: Save
+        run: |
+          git add -A bubi README.md 2>/dev/null || true
+          git diff --cached --quiet || (git commit -m "bubi data $(date -u +%Y-%m-%dT%H:%MZ)" && git push origin fleet-data)
